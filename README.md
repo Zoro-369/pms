@@ -1,407 +1,228 @@
-###### Copyright © 2025 Code Jackal | Original Course Material by Chris Blakely
+# Java Spring Microservices
 
----
-# Join the Discord Community
-
-This source code is for the Java/Spring microservices course available on my 
-YouTube channel. You can join the discord for help and discussion here:
-
-https://discord.gg/nCrDnfCE
-
-
-# Patient Service
-
+A production-style **microservices-based system** built using **Spring Boot, Spring Cloud, Docker, and modern backend technologies**. This project demonstrates how to design, build, and deploy scalable distributed systems following real-world enterprise patterns.
 ---
 
-## Environment Variables
+## 📚 Table of Contents
 
-```
-JAVA_TOOL_OPTIONS=-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005;
-SPRING_DATASOURCE_PASSWORD=password;
-SPRING_DATASOURCE_URL=jdbc:postgresql://patient-service-db:5432/db;
-SPRING_DATASOURCE_USERNAME=admin_user;
-SPRING_JPA_HIBERNATE_DDL_AUTO=update;
-SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9092;
-SPRING_SQL_INIT_MODE=always
-```
-
-# Billing Service
+* [Overview](#-overview)
+* [Architecture](#-architecture)
+* [Services](#-services)
+* [Tech Stack](#-tech-stack)
+* [Getting Started](#-getting-started)
+* [Environment Variables](#-environment-variables)
+* [Running the Project](#-running-the-project)
+* [API Communication](#-api-communication)
+* [Future Improvements](#-future-improvements)
 
 ---
 
-## gRPC Setup
+## 🧠 Overview
 
-Add the following to the `<dependencies>` section
-```
-<!--GRPC -->
-<dependency>
-    <groupId>io.grpc</groupId>
-    <artifactId>grpc-netty-shaded</artifactId>
-    <version>1.69.0</version>
-</dependency>
-<dependency>
-    <groupId>io.grpc</groupId>
-    <artifactId>grpc-protobuf</artifactId>
-    <version>1.69.0</version>
-</dependency>
-<dependency>
-    <groupId>io.grpc</groupId>
-    <artifactId>grpc-stub</artifactId>
-    <version>1.69.0</version>
-</dependency>
-<dependency> <!-- necessary for Java 9+ -->
-    <groupId>org.apache.tomcat</groupId>
-    <artifactId>annotations-api</artifactId>
-    <version>6.0.53</version>
-    <scope>provided</scope>
-</dependency>
-<dependency>
-    <groupId>net.devh</groupId>
-    <artifactId>grpc-spring-boot-starter</artifactId>
-    <version>3.1.0.RELEASE</version>
-</dependency>
-<dependency>
-    <groupId>com.google.protobuf</groupId>
-    <artifactId>protobuf-java</artifactId>
-    <version>4.29.1</version>
-</dependency>
+This project demonstrates a **microservices architecture**, where the system is split into multiple independent services that communicate with each other.
 
-```
+Each service:
 
-Replace the `<build>` section with the following
+* Runs independently
+* Has its own database (if required)
+* Communicates via **REST or gRPC**
+* Is containerized using Docker
 
-```
+This approach improves:
 
-<build>
-    <extensions>
-        <!-- Ensure OS compatibility for protoc -->
-        <extension>
-            <groupId>kr.motd.maven</groupId>
-            <artifactId>os-maven-plugin</artifactId>
-            <version>1.7.0</version>
-        </extension>
-    </extensions>
-    <plugins>
-        <!-- Spring boot / maven  -->
-        <plugin>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-maven-plugin</artifactId>
-        </plugin>
-
-        <!-- PROTO -->
-        <plugin>
-            <groupId>org.xolstice.maven.plugins</groupId>
-            <artifactId>protobuf-maven-plugin</artifactId>
-            <version>0.6.1</version>
-            <configuration>
-                <protocArtifact>com.google.protobuf:protoc:3.25.5:exe:${os.detected.classifier}</protocArtifact>
-                <pluginId>grpc-java</pluginId>
-                <pluginArtifact>io.grpc:protoc-gen-grpc-java:1.68.1:exe:${os.detected.classifier}</pluginArtifact>
-            </configuration>
-            <executions>
-                <execution>
-                    <goals>
-                        <goal>compile</goal>
-                        <goal>compile-custom</goal>
-                    </goals>
-                </execution>
-            </executions>
-        </plugin>
-    </plugins>
-</build>
-
-```
-
-# Patient Service
+* Scalability
+* Maintainability
+* Fault isolation
 
 ---
 
-## Environment Variables (complete list)
+## 🏗️ Architecture
+
+The system follows a typical **microservices architecture pattern**:
+
+```
+Client → API Gateway → Microservices → Database / Messaging System
+```
+
+### Key Components:
+
+* **API Gateway** – Single entry point for all requests
+* **Microservices** – Business logic split into services
+* **Kafka** – Event-driven communication
+* **gRPC** – High-performance service-to-service communication
+* **Docker** – Containerization
+* **PostgreSQL** – Database
+
+---
+
+## 🔧 Services
+
+The project consists of the following services:
+
+### 🧑‍⚕️ Patient Service
+
+* Manages patient data
+* Uses PostgreSQL
+* Publishes events to Kafka
+
+### 💳 Billing Service
+
+* Handles billing operations
+* Communicates using **gRPC**
+
+### 🔐 Auth Service
+
+* Manages authentication & authorization
+
+### 📊 Analytics Service
+
+* Processes and analyzes system data
+
+### 🌐 API Gateway
+
+* Routes incoming requests to appropriate services
+
+### 📨 API Requests Module
+
+* Contains shared request/response models
+
+### ⚙️ Infrastructure
+
+* Contains Docker, configs, and setup files
+
+### 🧪 Integration Tests
+
+* End-to-end testing across services
+
+> These modules are visible in the repository structure. ([GitHub][1])
+
+---
+
+## 🛠️ Tech Stack
+
+* **Java**
+* **Spring Boot**
+* **Spring Cloud**
+* **Apache Kafka**
+* **gRPC**
+* **Docker & Docker Compose**
+* **PostgreSQL**
+* **Maven**
+
+---
+
+## ⚡ Getting Started
+
+### Prerequisites
+
+Make sure you have installed:
+
+* Java 17+
+* Maven
+* Docker & Docker Compose
+* Git
+
+---
+
+## 🔑 Environment Variables
+
+Example for **Patient Service**:
+
 ```bash
-BILLING_SERVICE_ADDRESS=billing-service;
-BILLING_SERVICE_GRPC_PORT=9005;
-JAVA_TOOL_OPTIONS=-agentlib:jdwp\=transport\=dt_socket,server\=y,suspend\=n,address\=*:5005;
-SPRING_DATASOURCE_PASSWORD=password;
-SPRING_DATASOURCE_URL=jdbc:postgresql://patient-service-db:5432/db;
-SPRING_DATASOURCE_USERNAME=admin_user;
-SPRING_JPA_HIBERNATE_DDL_AUTO=update;
-SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9092;
-SPRING_SQL_INIT_MODE=always
-```
-
-
-## gRPC Setup
-
-Add the following to the `<dependencies>` section
-```
-<!--GRPC -->
-<dependency>
-    <groupId>io.grpc</groupId>
-    <artifactId>grpc-netty-shaded</artifactId>
-    <version>1.69.0</version>
-</dependency>
-<dependency>
-    <groupId>io.grpc</groupId>
-    <artifactId>grpc-protobuf</artifactId>
-    <version>1.69.0</version>
-</dependency>
-<dependency>
-    <groupId>io.grpc</groupId>
-    <artifactId>grpc-stub</artifactId>
-    <version>1.69.0</version>
-</dependency>
-<dependency> <!-- necessary for Java 9+ -->
-    <groupId>org.apache.tomcat</groupId>
-    <artifactId>annotations-api</artifactId>
-    <version>6.0.53</version>
-    <scope>provided</scope>
-</dependency>
-<dependency>
-    <groupId>net.devh</groupId>
-    <artifactId>grpc-spring-boot-starter</artifactId>
-    <version>3.1.0.RELEASE</version>
-</dependency>
-<dependency>
-    <groupId>com.google.protobuf</groupId>
-    <artifactId>protobuf-java</artifactId>
-    <version>4.29.1</version>
-</dependency>
-
-```
-
-Replace the `<build>` section with the following
-
-```
-
-<build>
-    <extensions>
-        <!-- Ensure OS compatibility for protoc -->
-        <extension>
-            <groupId>kr.motd.maven</groupId>
-            <artifactId>os-maven-plugin</artifactId>
-            <version>1.7.0</version>
-        </extension>
-    </extensions>
-    <plugins>
-        <!-- Spring boot / maven  -->
-        <plugin>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-maven-plugin</artifactId>
-        </plugin>
-
-        <!-- PROTO -->
-        <plugin>
-            <groupId>org.xolstice.maven.plugins</groupId>
-            <artifactId>protobuf-maven-plugin</artifactId>
-            <version>0.6.1</version>
-            <configuration>
-                <protocArtifact>com.google.protobuf:protoc:3.25.5:exe:${os.detected.classifier}</protocArtifact>
-                <pluginId>grpc-java</pluginId>
-                <pluginArtifact>io.grpc:protoc-gen-grpc-java:1.68.1:exe:${os.detected.classifier}</pluginArtifact>
-            </configuration>
-            <executions>
-                <execution>
-                    <goals>
-                        <goal>compile</goal>
-                        <goal>compile-custom</goal>
-                    </goals>
-                </execution>
-            </executions>
-        </plugin>
-    </plugins>
-</build>
-
-```
-
-## Kafka Container
-
-Copy/paste this line into the environment variables when running the container in intellij
-```
-KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094;KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER;KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=0@kafka:9093;KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT,PLAINTEXT:PLAINTEXT;KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094;KAFKA_CFG_NODE_ID=0;KAFKA_CFG_PROCESS_ROLES=controller,broker
-```
-
-## Kafka Producer Setup (Patient Service)
-
-Add the following to `application.properties`
-```
-spring.kafka.consumer.key-deserializer=org.apache.kafka.common.serialization.StringDeserializer
-spring.kafka.consumer.value-deserializer=org.apache.kafka.common.serialization.ByteArrayDeserializer
-```
-
-
-# Notification Service
-
----
-
-## Environment Vars
-
-```
-SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-```
-
-## Protobuf/Kafka 
-
-Dependencies (add in addition to whats there)
-
-```
-<dependency>
-    <groupId>org.springframework.kafka</groupId>
-    <artifactId>spring-kafka</artifactId>
-    <version>3.3.0</version>
-</dependency>
-
-<dependency>
-    <groupId>com.google.protobuf</groupId>
-    <artifactId>protobuf-java</artifactId>
-    <version>4.29.1</version>
-</dependency>
-```
-
-Update the build section in pom.xml with the following
-
-```
-    <build>
-        <extensions>
-            <!-- Ensure OS compatibility for protoc -->
-            <extension>
-                <groupId>kr.motd.maven</groupId>
-                <artifactId>os-maven-plugin</artifactId>
-                <version>1.7.0</version>
-            </extension>
-        </extensions>
-        <plugins>
-            <plugin>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-maven-plugin</artifactId>
-            </plugin>
-
-            <plugin>
-                <groupId>org.xolstice.maven.plugins</groupId>
-                <artifactId>protobuf-maven-plugin</artifactId>
-                <version>0.6.1</version>
-                <configuration>
-                    <protocArtifact>com.google.protobuf:protoc:3.25.5:exe:${os.detected.classifier}</protocArtifact>
-                    <pluginId>grpc-java</pluginId>
-                    <pluginArtifact>io.grpc:protoc-gen-grpc-java:1.68.1:exe:${os.detected.classifier}</pluginArtifact>
-                </configuration>
-                <executions>
-                    <execution>
-                        <goals>
-                            <goal>compile</goal>
-                            <goal>compile-custom</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin>
-        </plugins>
-    </build>
-```
-
-
-# Auth service
-
-Dependencies (add in addition to whats there)
-
-```
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-security</artifactId>
-        </dependency>
-
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-jpa</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.security</groupId>
-            <artifactId>spring-security-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>io.jsonwebtoken</groupId>
-            <artifactId>jjwt-api</artifactId>
-            <version>0.12.6</version>
-        </dependency>
-        <dependency>
-            <groupId>io.jsonwebtoken</groupId>
-            <artifactId>jjwt-impl</artifactId>
-            <version>0.12.6</version>
-            <scope>runtime</scope>
-        </dependency>
-        <dependency>
-            <groupId>io.jsonwebtoken</groupId>
-            <artifactId>jjwt-jackson</artifactId>
-            <version>0.12.6</version>
-            <scope>runtime</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.postgresql</groupId>
-            <artifactId>postgresql</artifactId>
-            <scope>runtime</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.springdoc</groupId>
-            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
-            <version>2.6.0</version>
-        </dependency>
-        <dependency>
-          <groupId>com.h2database</groupId>
-          <artifactId>h2</artifactId>
-        </dependency>
-       
-```
-
-## Environment Variables
-
-```
+JAVA_TOOL_OPTIONS=-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005
 SPRING_DATASOURCE_PASSWORD=password
-SPRING_DATASOURCE_URL=jdbc:postgresql://auth-service-db:5432/db
+SPRING_DATASOURCE_URL=jdbc:postgresql://patient-service-db:5432/db
 SPRING_DATASOURCE_USERNAME=admin_user
 SPRING_JPA_HIBERNATE_DDL_AUTO=update
+SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9092
 SPRING_SQL_INIT_MODE=always
 ```
 
+> These variables configure database, Kafka, and debugging. ([GitHub][1])
 
-## Data.sql
+---
 
-```sql
--- Ensure the 'users' table exists
-CREATE TABLE IF NOT EXISTS "users" (
-    id UUID PRIMARY KEY,
-    email VARCHAR(255) UNIQUE NOT NULL,
-    password VARCHAR(255) NOT NULL,
-    role VARCHAR(50) NOT NULL
-);
+## ▶️ Running the Project
 
--- Insert the user if no existing user with the same id or email exists
-INSERT INTO "users" (id, email, password, role)
-SELECT '223e4567-e89b-12d3-a456-426614174006', 'testuser@test.com',
-       '$2b$12$7hoRZfJrRKD2nIm2vHLs7OBETy.LWenXXMLKf99W8M4PUwO6KB7fu', 'ADMIN'
-WHERE NOT EXISTS (
-    SELECT 1
-    FROM "users"
-    WHERE id = '223e4567-e89b-12d3-a456-426614174006'
-       OR email = 'testuser@test.com'
-);
+### 1. Clone the repository
 
-
-
+```bash
+git clone https://github.com/zoro-369/java-spring-microservices.git
+cd java-spring-microservices
 ```
 
+### 2. Start services using Docker
 
-# Auth Service DB
-
-## Environment Variables
-
+```bash
+docker-compose up --build
 ```
-POSTGRES_DB=db;POSTGRES_PASSWORD=password;POSTGRES_USER=admin_user
+
+### 3. Access services
+
+* API Gateway → `http://localhost:<port>`
+* Individual services → defined in docker-compose
+
+---
+
+## 🔄 API Communication
+
+This system uses multiple communication patterns:
+
+### REST (Synchronous)
+
+* Used between client and API Gateway
+
+### gRPC (High-performance)
+
+* Used between services (e.g., Billing Service)
+
+```xml
+<!-- Example dependency -->
+<dependency>
+  <groupId>io.grpc</groupId>
+  <artifactId>grpc-netty-shaded</artifactId>
+</dependency>
 ```
+
+### Kafka (Event-driven)
+
+* Used for asynchronous communication
+
+---
+
+## 🚀 Features
+
+* Microservices-based architecture
+* API Gateway routing
+* Service-to-service communication (gRPC)
+* Event-driven messaging (Kafka)
+* Containerized deployment (Docker)
+* Scalable and modular design
+
+---
+
+## 🔮 Future Improvements
+
+* Add service discovery (Eureka)
+* Implement distributed tracing (Zipkin)
+* Add monitoring (Prometheus + Grafana)
+* Kubernetes deployment
+* CI/CD pipelines
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome!
+
+1. Fork the repo
+2. Create a new branch
+3. Make your changes
+4. Submit a PR
+
+---
+
+## 📜 License
+
+This project is for educational purposes based on course material.
+
