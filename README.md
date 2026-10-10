@@ -224,5 +224,5 @@ Contributions are welcome!
 
 ## 📜 License
 
-This project is for educational purposes based on course material.
+This project is for educational purposes.
 
