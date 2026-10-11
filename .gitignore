@@ -85,3 +85,5 @@ Thumbs.db
 # AWS credentials
 .aws/
 .env
+
+perf/results/*-summary.json
