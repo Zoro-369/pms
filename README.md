@@ -1,228 +1,113 @@
-# Java Spring Microservices
+# PMS: Patient Management Microservices
 
-A production-style **microservices-based system** built using **Spring Boot, Spring Cloud, Docker, and modern backend technologies**. This project demonstrates how to design, build, and deploy scalable distributed systems following real-world enterprise patterns.
----
+A backend-only patient-management system built as five Spring Boot services (Java 21) behind a Spring Cloud Gateway,
+using REST, gRPC and Kafka.
 
-## 📚 Table of Contents
+> **Origin and credit:** this project started from a structured microservices course and is being extended beyond it.
+> The improvements I have made on top of the base are listed in [What I changed](#what-i-changed). Anything not listed there is course-base behaviour.
 
-* [Overview](#-overview)
-* [Architecture](#-architecture)
-* [Services](#-services)
-* [Tech Stack](#-tech-stack)
-* [Getting Started](#-getting-started)
-* [Environment Variables](#-environment-variables)
-* [Running the Project](#-running-the-project)
-* [API Communication](#-api-communication)
-* [Future Improvements](#-future-improvements)
-
----
-
-## 🧠 Overview
-
-This project demonstrates a **microservices architecture**, where the system is split into multiple independent services that communicate with each other.
-
-Each service:
-
-* Runs independently
-* Has its own database (if required)
-* Communicates via **REST or gRPC**
-* Is containerized using Docker
-
-This approach improves:
-
-* Scalability
-* Maintainability
-* Fault isolation
-
----
-
-## 🏗️ Architecture
-
-The system follows a typical **microservices architecture pattern**:
+## Architecture
 
 ```
-Client → API Gateway → Microservices → Database / Messaging System
+Client
+  |  REST + Bearer JWT
+  v
+API Gateway :4004  (Spring Cloud Gateway, JwtValidation filter)
+  |-- /auth/**          --> Auth Service :4005      --> Postgres (auth-service-db)
+  |-- /api/patients/**  --> Patient Service :4000   --> Postgres (patient-service-db)
+  |        (JWT checked via Auth Service GET /validate)      |-- gRPC --> Billing Service :9001 (stub)
+  |                                                          '-- Kafka topic "patient" (protobuf)
+  |                                                                    |
+  '-- /api-docs/*  (Swagger)                                           v
+                                                              Analytics Service (logs events)
 ```
 
-### Key Components:
+| Service | Port | Role |
+|---|---|---|
+| api-gateway | 4004 | Single entry point, routing, JWT check on `/api/patients/**` |
+| auth-service | 4005 | Login, JWT issue and validation (BCrypt, HS256) |
+| patient-service | 4000 | Patient CRUD; calls billing over gRPC and publishes a Kafka event on create |
+| billing-service | 4001 / 9001 | gRPC `CreateBillingAccount` (currently a stub) |
+| analytics-service | 4002 | Kafka consumer of patient events (currently logs only) |
 
-* **API Gateway** – Single entry point for all requests
-* **Microservices** – Business logic split into services
-* **Kafka** – Event-driven communication
-* **gRPC** – High-performance service-to-service communication
-* **Docker** – Containerization
-* **PostgreSQL** – Database
+## Quickstart (Docker)
 
----
-
-## 🔧 Services
-
-The project consists of the following services:
-
-### 🧑‍⚕️ Patient Service
-
-* Manages patient data
-* Uses PostgreSQL
-* Publishes events to Kafka
-
-### 💳 Billing Service
-
-* Handles billing operations
-* Communicates using **gRPC**
-
-### 🔐 Auth Service
-
-* Manages authentication & authorization
-
-### 📊 Analytics Service
-
-* Processes and analyzes system data
-
-### 🌐 API Gateway
-
-* Routes incoming requests to appropriate services
-
-### 📨 API Requests Module
-
-* Contains shared request/response models
-
-### ⚙️ Infrastructure
-
-* Contains Docker, configs, and setup files
-
-### 🧪 Integration Tests
-
-* End-to-end testing across services
-
-> These modules are visible in the repository structure. ([GitHub][1])
-
----
-
-## 🛠️ Tech Stack
-
-* **Java**
-* **Spring Boot**
-* **Spring Cloud**
-* **Apache Kafka**
-* **gRPC**
-* **Docker & Docker Compose**
-* **PostgreSQL**
-* **Maven**
-
----
-
-## ⚡ Getting Started
-
-### Prerequisites
-
-Make sure you have installed:
-
-* Java 17+
-* Maven
-* Docker & Docker Compose
-* Git
-
----
-
-## 🔑 Environment Variables
-
-Example for **Patient Service**:
+**Prerequisites:** Docker Desktop (or Docker Engine with the Compose plugin). The first build downloads Maven dependencies and can take several minutes.
 
 ```bash
-JAVA_TOOL_OPTIONS=-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005
-SPRING_DATASOURCE_PASSWORD=password
-SPRING_DATASOURCE_URL=jdbc:postgresql://patient-service-db:5432/db
-SPRING_DATASOURCE_USERNAME=admin_user
-SPRING_JPA_HIBERNATE_DDL_AUTO=update
-SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-SPRING_SQL_INIT_MODE=always
+# 1. Create your local config (never commit .env)
+cp .env.example .env
+# fill in both values, e.g. on macOS/Linux/Git Bash:
+printf "JWT_SECRET=%s\nDB_PASSWORD=%s\n" "$(openssl rand -base64 32)" "$(openssl rand -hex 12)" > .env
+
+# 2. Build and start everything
+docker compose up --build -d
+
+# 3. Run the smoke test (login, auth checks, create patient, billing + Kafka verification)
+./scripts/smoke-test.sh
 ```
 
-> These variables configure database, Kafka, and debugging. ([GitHub][1])
-
----
-
-## ▶️ Running the Project
-
-### 1. Clone the repository
+Useful commands:
 
 ```bash
-git clone https://github.com/zoro-369/java-spring-microservices.git
-cd java-spring-microservices
+docker compose ps                          # status of all containers
+docker compose logs -f patient-service     # follow one service
+docker compose down                        # stop (keeps database volumes)
+docker compose down -v                     # stop and wipe all data
 ```
 
-### 2. Start services using Docker
+Only the gateway (`localhost:4004`) is published for application traffic. The other services are reachable only inside the compose network.
+Optional host ports for debugging: Postgres on `127.0.0.1:5001` (auth) and `5002` (patient), Kafka on `127.0.0.1:9094`, billing gRPC on `127.0.0.1:9001`.
+
+### Try it manually
 
 ```bash
-docker-compose up --build
+# Seeded user: testuser@test.com / password123 (role ADMIN). Development data only.
+TOKEN=$(curl -s -X POST localhost:4004/auth/login -H 'Content-Type: application/json' \
+  -d '{"email":"testuser@test.com","password":"password123"}' | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+
+curl -s localhost:4004/api/patients -H "Authorization: Bearer $TOKEN"
+
+curl -s -X POST localhost:4004/api/patients -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"name":"Jane Doe","email":"jane@example.com","address":"1 Main St","dateOfBirth":"1995-09-09","registeredDate":"2024-11-28"}'
+
+docker compose logs analytics-service | grep jane@example.com   # the Kafka event arrived
 ```
 
-### 3. Access services
+API docs: `http://localhost:4004/api-docs/patients` and `http://localhost:4004/api-docs/auth` (OpenAPI JSON).
+Sample requests for an HTTP client are in `api-requests/` (their base URL points at the LocalStack load balancer; change it to `http://localhost:4004`).
 
-* API Gateway → `http://localhost:<port>`
-* Individual services → defined in docker-compose
+## Create-patient flow
 
----
+1. Validate the request (Bean Validation) and check for a duplicate email.
+2. Save the patient in `patient-service-db`.
+3. Call billing-service over gRPC to create a billing account.
+4. Publish a `PATIENT_CREATED` protobuf event to Kafka topic `patient`.
+5. Return the saved patient.
 
-## 🔄 API Communication
+## AWS / LocalStack deployment (alternative path)
 
-This system uses multiple communication patterns:
+`infrastructure/` contains an AWS CDK (Java) stack that provisions a VPC, two RDS Postgres instances, an MSK cluster and ECS Fargate services,
+deployed to LocalStack with `infrastructure/localstack-deploy.sh`. It is separate from the Docker Compose setup above.
 
-### REST (Synchronous)
+## Known limitations (being addressed)
 
-* Used between client and API Gateway
+- `createPatient` is not atomic across the database, gRPC and Kafka (no transactional outbox yet).
+- gRPC calls have no deadline, retry or circuit breaker.
+- Billing and analytics are stubs.
+- The JWT `role` claim is issued but not enforced (no RBAC); the signing secret is a shared symmetric key.
+- `GET /api/patients` is not paginated; some error responses use 400 where 404 or 409 is more appropriate.
+- Test coverage is limited to a few integration tests that need the full stack running.
 
-### gRPC (High-performance)
+## What I changed
 
-* Used between services (e.g., Billing Service)
+- Added a Docker Compose setup (Postgres x2, single-node Kafka, all services), an `.env`-based configuration for secrets, and an end-to-end smoke test.
+- Set the analytics service port explicitly so it matches its Dockerfile.
 
-```xml
-<!-- Example dependency -->
-<dependency>
-  <groupId>io.grpc</groupId>
-  <artifactId>grpc-netty-shaded</artifactId>
-</dependency>
+## Project layout
+
 ```
-
-### Kafka (Event-driven)
-
-* Used for asynchronous communication
-
----
-
-## 🚀 Features
-
-* Microservices-based architecture
-* API Gateway routing
-* Service-to-service communication (gRPC)
-* Event-driven messaging (Kafka)
-* Containerized deployment (Docker)
-* Scalable and modular design
-
----
-
-## 🔮 Future Improvements
-
-* Add service discovery (Eureka)
-* Implement distributed tracing (Zipkin)
-* Add monitoring (Prometheus + Grafana)
-* Kubernetes deployment
-* CI/CD pipelines
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome!
-
-1. Fork the repo
-2. Create a new branch
-3. Make your changes
-4. Submit a PR
-
----
-
-## 📜 License
-
-This project is for educational purposes.
-
+api-gateway/  auth-service/  patient-service/  billing-service/  analytics-service/
+infrastructure/   integration-tests/   api-requests/   grpc-requests/
+docker-compose.yml   .env.example   scripts/smoke-test.sh
+```
