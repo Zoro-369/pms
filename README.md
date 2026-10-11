@@ -103,7 +103,8 @@ deployed to LocalStack with `infrastructure/localstack-deploy.sh`. It is separat
 
 - Added a Docker Compose setup (Postgres x2, single-node Kafka, all services), an `.env`-based configuration for secrets, and an end-to-end smoke test.
 - Set the analytics service port explicitly so it matches its Dockerfile.
-
+- Added a baseline performance benchmark (k6) and documented the results.
+- Fixed API status codes, error format, date handling and login validation.
 ## Project layout
 
 ```

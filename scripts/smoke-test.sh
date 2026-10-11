@@ -30,7 +30,7 @@ echo "2. Login"
 TOKEN=$(curl -s -X POST "$BASE_URL/auth/login" -H 'Content-Type: application/json' \
           -d '{"email":"testuser@test.com","password":"password123"}' | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
 if [ -n "$TOKEN" ]; then pass "received a JWT"; else fail "no token in login response"; exit 1; fi
-expect "wrong password is rejected" 401 "$(code -X POST "$BASE_URL/auth/login" -H 'Content-Type: application/json' -d '{"email":"testuser@test.com","password":"wrong"}')"
+expect "wrong password is rejected" 401 "$(code -X POST "$BASE_URL/auth/login" -H 'Content-Type: application/json' -d '{"email":"testuser@test.com","password":"wrongpassword"}')"
 
 echo "3. Gateway authentication"
 expect "GET /api/patients without token" 401 "$(code "$BASE_URL/api/patients")"
@@ -38,8 +38,16 @@ expect "GET /api/patients with token" 200 "$(code "$BASE_URL/api/patients" -H "A
 
 echo "4. Create patient (DB save -> gRPC billing -> Kafka event)"
 BODY=$(printf '{"name":"Smoke Test","email":"%s","address":"1 Test Street","dateOfBirth":"1995-09-09","registeredDate":"2024-11-28"}' "$EMAIL")
-expect "POST /api/patients" 200 "$(code -X POST "$BASE_URL/api/patients" -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" -d "$BODY")"
-expect "duplicate email is rejected" 400 "$(code -X POST "$BASE_URL/api/patients" -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" -d "$BODY")"
+expect "POST /api/patients" 201 "$(code -X POST "$BASE_URL/api/patients" -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" -d "$BODY")"
+expect "duplicate email is rejected" 409 "$(code -X POST "$BASE_URL/api/patients" -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" -d "$BODY")"
+
+echo "4b. Day 2 API behaviour"
+expect "login with too-short password fails validation" 400 "$(code -X POST "$BASE_URL/auth/login" -H 'Content-Type: application/json' -d '{"email":"testuser@test.com","password":"short"}')"
+expect "unknown patient id returns 404" 404 "$(code "$BASE_URL/api/patients/00000000-0000-0000-0000-000000000000" -H "Authorization: Bearer $TOKEN")"
+expect "malformed id returns 400" 400 "$(code "$BASE_URL/api/patients/not-a-uuid" -H "Authorization: Bearer $TOKEN")"
+BAD=$(printf '{"name":"Bad Date","email":"bad_%s@example.com","address":"x","dateOfBirth":"31-12-1995","registeredDate":"2024-11-28"}' "$(date +%s)")
+expect "malformed date returns 400 (not 500)" 400 "$(code -X POST "$BASE_URL/api/patients" -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" -d "$BAD")"
+expect "delete unknown patient returns 404" 404 "$(code -X DELETE "$BASE_URL/api/patients/00000000-0000-0000-0000-000000000000" -H "Authorization: Bearer $TOKEN")"
 
 echo "5. Downstream effects (read from container logs)"
 if command -v docker >/dev/null 2>&1 && docker compose ps >/dev/null 2>&1; then

@@ -7,6 +7,7 @@ import com.pm.patientservice.service.PatientService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.groups.Default;
+import java.net.URI;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.http.ResponseEntity;
@@ -38,25 +39,34 @@ public class PatientController {
     return ResponseEntity.ok().body(patients);
   }
 
+  @GetMapping("/{id}")
+  @Operation(summary = "Get a Patient by id")
+  public ResponseEntity<PatientResponseDTO> getPatient(@PathVariable UUID id) {
+    return ResponseEntity.ok(patientService.getPatient(id));
+  }
+
   @PostMapping
   @Operation(summary = "Create a new Patient")
   public ResponseEntity<PatientResponseDTO> createPatient(
-      @Validated({Default.class, CreatePatientValidationGroup.class})
-      @RequestBody PatientRequestDTO patientRequestDTO) {
+          @Validated({Default.class, CreatePatientValidationGroup.class})
+          @RequestBody PatientRequestDTO patientRequestDTO) {
 
     PatientResponseDTO patientResponseDTO = patientService.createPatient(
-        patientRequestDTO);
+            patientRequestDTO);
 
-    return ResponseEntity.ok().body(patientResponseDTO);
+    // Location uses the public path exposed by the gateway (/api/patients), not this service's
+    // internal /patients path, because clients only ever see the gateway.
+    URI location = URI.create("/api/patients/" + patientResponseDTO.getId());
+    return ResponseEntity.created(location).body(patientResponseDTO);
   }
 
   @PutMapping("/{id}")
-  @Operation(summary = "Update a new Patient")
+  @Operation(summary = "Update a Patient")
   public ResponseEntity<PatientResponseDTO> updatePatient(@PathVariable UUID id,
-      @Validated({Default.class}) @RequestBody PatientRequestDTO patientRequestDTO) {
+                                                          @Validated({Default.class}) @RequestBody PatientRequestDTO patientRequestDTO) {
 
     PatientResponseDTO patientResponseDTO = patientService.updatePatient(id,
-        patientRequestDTO);
+            patientRequestDTO);
 
     return ResponseEntity.ok().body(patientResponseDTO);
   }
