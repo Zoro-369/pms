@@ -5,16 +5,16 @@
 
 ## Environment
 
-| Item | Value |
-|---|---|
-| Date | 2026-10-11 |
-| Git commit | `8ab435f` |
-| Machine | `mob-HP-Laptop-15s-eq2xxx` (x86_64, 12 vCPU, 7.25 GB RAM) |
-| OS | Ubuntu 24.04.4 LTS / Linux 7.0.0-38-generic |
+| Item | Value                                                           |
+|---|-----------------------------------------------------------------|
+| Date | 2026-10-11                                                      |
+| Git commit | `8ab435f`                                                       |
+| Machine | `HP-Laptop-15s`                                                 |
+| OS | Ubuntu 24.04.4 LTS / Linux 7.0.0-38-generic                     |
 | Docker Desktop resources | N/A — local Linux host via `docker compose`; not Docker Desktop |
-| Services | all 5 + 2 Postgres + Kafka via `docker compose` |
-| Patients in DB before run | Not captured in the provided run log |
-| Patients in DB after run | Not captured in the provided run log |
+| Services | all 5 + 2 Postgres + Kafka via `docker compose`                 |
+| Patients in DB before run | 15                                                              |
+| Patients in DB after run | 662                                                             |
 
 ## Method
 

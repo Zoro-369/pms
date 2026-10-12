@@ -212,8 +212,9 @@ public class LocalStack extends Stack {
       envVars.put("SPRING_DATASOURCE_USERNAME", "admin_user");
       envVars.put("SPRING_DATASOURCE_PASSWORD",
           db.getSecret().secretValueFromJson("password").toString());
-      envVars.put("SPRING_JPA_HIBERNATE_DDL_AUTO", "update");
-      envVars.put("SPRING_SQL_INIT_MODE", "always");
+      envVars.put("SPRING_JPA_HIBERNATE_DDL_AUTO", "validate");
+      envVars.put("SPRING_SQL_INIT_MODE", "never");
+      envVars.put("SPRING_FLYWAY_LOCATIONS", "classpath:db/migration,classpath:db/seed");
       envVars.put("SPRING_DATASOURCE_HIKARI_INITIALIZATION_FAIL_TIMEOUT", "60000");
     }
 
@@ -276,7 +277,7 @@ public class LocalStack extends Stack {
     App app = new App(AppProps.builder().outdir("./cdk.out").build());
 
     StackProps props = StackProps.builder()
-        .synthesizer(new BootstraplessSynthesizer())
+        .synthesizer( new BootstraplessSynthesizer())
         .build();
 
     new LocalStack(app, "localstack", props);

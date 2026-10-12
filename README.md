@@ -105,6 +105,7 @@ deployed to LocalStack with `infrastructure/localstack-deploy.sh`. It is separat
 - Set the analytics service port explicitly so it matches its Dockerfile.
 - Added a baseline performance benchmark (k6) and documented the results.
 - Fixed API status codes, error format, date handling and login validation.
+- Replace ddl-auto and data.sql with Flyway migrations.
 ## Project layout
 
 ```
