@@ -150,7 +150,39 @@
           </execution>
         </executions>
       </plugin>
+
+      <!-- patient-service/pom.xml: add inside <build><plugins> (after protobuf-maven-plugin) -->
+      <plugin>
+        <groupId>org.jacoco</groupId>
+        <artifactId>jacoco-maven-plugin</artifactId>
+        <version>0.8.12</version>
+        <configuration>
+          <!-- Generated protobuf/gRPC code is not ours to test -->
+          <excludes>
+            <exclude>billing/**</exclude>
+            <exclude>patient/events/**</exclude>
+          </excludes>
+        </configuration>
+        <executions>
+          <execution>
+            <id>prepare-agent</id>
+            <goals>
+              <goal>prepare-agent</goal>
+            </goals>
+          </execution>
+          <execution>
+            <!-- bound to the test phase so a plain `mvn test` also writes the report -->
+            <id>report</id>
+            <phase>test</phase>
+            <goals>
+              <goal>report</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
     </plugins>
+
+
   </build>
 
 
