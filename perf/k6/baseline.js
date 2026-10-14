@@ -5,6 +5,7 @@
 //   k6 run perf/k6/baseline.js
 //   k6 run -e BASE_URL=http://localhost:4004 perf/k6/baseline.js
 //
+// NOTE (Day 4): list now returns one page (20 rows) instead of every patient.
 // Three scenarios run at the same time, each at a fixed request rate:
 //   login          5 req/s   (BCrypt is deliberately slow, so keep this low)
 //   list_patients  20 req/s  (returns EVERY patient, so it slows down as data grows)
@@ -49,6 +50,9 @@ export const options = {
         'http_reqs{scenario:login}': ['count>=0'],
         'http_reqs{scenario:list_patients}': ['count>=0'],
         'http_reqs{scenario:create_patient}': ['count>=0'],
+        'data_received{scenario:login}': ['count>=0'],
+        'data_received{scenario:list_patients}': ['count>=0'],
+        'data_received{scenario:create_patient}': ['count>=0'],
     },
 };
 
@@ -59,7 +63,22 @@ export function setup() {
     if (res.status !== 200) {
         throw new Error(`Setup login failed with HTTP ${res.status}. Is the stack up (docker compose ps)?`);
     }
-    return { token: res.json('token') };
+    const token = res.json('token');
+
+    // Warm-up (not measured): the first protected requests pay one-off costs (JIT, class loading,
+    // connection pools, Kafka producer metadata, gRPC channel connect). Without this, a cold start
+    // shows up as a ~1 s p99 spike that says nothing about steady-state behaviour.
+    const auth = { headers: { ...JSON_HEADERS, Authorization: `Bearer ${token}` } };
+    for (let i = 0; i < 30; i++) {
+        http.get(`${BASE}/api/v1/patients`, auth);
+    }
+    for (let i = 0; i < 3; i++) {
+        http.post(`${BASE}/api/v1/patients`, JSON.stringify({
+            name: 'K6 Warmup', email: `k6-warmup-${Date.now()}-${i}@example.com`, address: '1 Warmup St',
+            dateOfBirth: '1995-09-09', registeredDate: '2024-11-28',
+        }), auth);
+    }
+    return { token: token };
 }
 
 export function login() {
@@ -69,7 +88,7 @@ export function login() {
 }
 
 export function listPatients(data) {
-    const res = http.get(`${BASE}/api/patients`, { headers: { Authorization: `Bearer ${data.token}` } });
+    const res = http.get(`${BASE}/api/v1/patients`, { headers: { Authorization: `Bearer ${data.token}` } });
     check(res, { 'list 200': (r) => r.status === 200 });
 }
 
@@ -82,7 +101,7 @@ export function createPatient(data) {
         dateOfBirth: '1995-09-09',
         registeredDate: '2024-11-28',
     });
-    const res = http.post(`${BASE}/api/patients`, body,
+    const res = http.post(`${BASE}/api/v1/patients`, body,
         { headers: { ...JSON_HEADERS, Authorization: `Bearer ${data.token}` } });
     // 200 before the Day 2 fixes, 201 after; accept both so the same script works for the comparison run.
     check(res, { 'create 200/201': (r) => r.status === 200 || r.status === 201 });
@@ -104,11 +123,13 @@ export function handleSummary(data) {
         const rps = count === 'n/a' ? 'n/a' : (count / seconds).toFixed(1);
         const failed = val(data, `http_req_failed{scenario:${s}}`, 'rate');
         const failPct = failed === 'n/a' ? 'n/a' : (failed * 100).toFixed(2) + '%';
-        return `| ${s} | ${count} | ${rps} | ${ms(val(data, d, 'med'))} | ${ms(val(data, d, 'p(95)'))} | ${ms(val(data, d, 'p(99)'))} | ${failPct} |`;
+        const bytes = val(data, `data_received{scenario:${s}}`, 'count');
+        const kb = (bytes === 'n/a' || count === 'n/a' || count === 0) ? 'n/a' : (bytes / count / 1024).toFixed(1);
+        return `| ${s} | ${count} | ${rps} | ${ms(val(data, d, 'med'))} | ${ms(val(data, d, 'p(95)'))} | ${ms(val(data, d, 'p(99)'))} | ${kb} | ${failPct} |`;
     });
     const table = [
-        '| Scenario | Requests | Achieved req/s | p50 (ms) | p95 (ms) | p99 (ms) | Failed |',
-        '|---|---|---|---|---|---|---|',
+        '| Scenario | Requests | Achieved req/s | p50 (ms) | p95 (ms) | p99 (ms) | KB per response | Failed |',
+        '|---|---|---|---|---|---|---|---|',
         ...rows,
     ].join('\n');
     const label = __ENV.RUN_LABEL || 'baseline';

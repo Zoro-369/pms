@@ -43,3 +43,44 @@
 - Everything runs on one machine inside Docker, so numbers are only comparable with runs on the same machine and settings.
 - The list scenario's cost grows as the create scenario adds patients; this is a property of the current design, not noise.
 - First requests after startup include JVM warm-up; run the test twice and record the second run.
+
+## Day 4 comparison: pagination, sorting and search
+
+Same machine, same scenarios (login 5/s, list 20/s, create 10/s for 60 s), run through the gateway.
+"After" is the second run after a fresh start, with the warm-up described below.
+
+| Metric | Day 2 baseline | After Day 4 |
+|---|---|---|
+| list p50 / p95 / p99 (ms) | 11.3 / 15.7 / 19.2 | 6.5 / 9.4 / 12.3 |
+| create p50 / p95 / p99 (ms) | 14.6 / 20.3 / 26.3 | 10.1 / 15.1 / 20.3 |
+| login p50 / p95 / p99 (ms) | 251.7 / 270.4 / 283.7 | 246.7 / 258.8 / 274.3 |
+| list response size | not measured | 3.5 KB (20 rows) |
+| failed requests | 0% | 0% |
+
+Run-to-run range over <N> runs (fill in after repeating): list p50 <min>-<max> ms, list p95 <min>-<max> ms.
+
+### Interpretation
+
+- **Latency:** list p50 and p95 dropped, but create dropped by a similar amount (about 30%) with almost no code change,
+  so much of the difference is run-to-run variation and warm-up rather than pagination. I am not claiming a latency
+  improvement from pagination.
+- **What pagination changes:** the work and payload per request are now bounded. A list call returns about 3.5 KB
+  (20 rows) however large the table grows. Before, it returned every patient (about 600-1,200 rows in the recorded
+  baseline run; roughly 175 bytes per row, so on the order of 100+ KB per call; this is an estimate, not a measurement).
+- **Cold start:** the first run after a rebuild showed p99 of about 1.2 s for list and create, while login was normal.
+  Only list and create go through the gateway's token validation, and the first validations pay one-off costs
+  (JIT, class loading, connection setup, Kafka producer and gRPC channel initialisation). I added an unmeasured
+  warm-up to the k6 `setup()`, and p99 fell to 12 ms (list) and 20 ms (create).
+
+### Limits of this benchmark
+
+- The table holds about 1,000 rows, too small for pagination or indexes to matter for latency.
+  Day 27 re-measures with a large dataset, indexes and keyset pagination.
+- Single machine, everything in Docker, so numbers only compare with runs on the same setup.
+
+### Reproduce
+
+```bash
+docker compose down -v && docker compose up -d
+RUN_LABEL=after-day4 k6 run perf/k6/baseline.js   # run twice, record the second
+```

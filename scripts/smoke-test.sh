@@ -33,21 +33,28 @@ if [ -n "$TOKEN" ]; then pass "received a JWT"; else fail "no token in login res
 expect "wrong password is rejected" 401 "$(code -X POST "$BASE_URL/auth/login" -H 'Content-Type: application/json' -d '{"email":"testuser@test.com","password":"wrongpassword"}')"
 
 echo "3. Gateway authentication"
-expect "GET /api/patients without token" 401 "$(code "$BASE_URL/api/patients")"
-expect "GET /api/patients with token" 200 "$(code "$BASE_URL/api/patients" -H "Authorization: Bearer $TOKEN")"
+expect "GET /api/v1/patients without token" 401 "$(code "$BASE_URL/api/v1/patients")"
+expect "GET /api/v1/patients with token" 200 "$(code "$BASE_URL/api/v1/patients" -H "Authorization: Bearer $TOKEN")"
 
 echo "4. Create patient (DB save -> gRPC billing -> Kafka event)"
 BODY=$(printf '{"name":"Smoke Test","email":"%s","address":"1 Test Street","dateOfBirth":"1995-09-09","registeredDate":"2024-11-28"}' "$EMAIL")
-expect "POST /api/patients" 201 "$(code -X POST "$BASE_URL/api/patients" -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" -d "$BODY")"
-expect "duplicate email is rejected" 409 "$(code -X POST "$BASE_URL/api/patients" -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" -d "$BODY")"
+expect "POST /api/v1/patients" 201 "$(code -X POST "$BASE_URL/api/v1/patients" -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" -d "$BODY")"
+expect "duplicate email is rejected" 409 "$(code -X POST "$BASE_URL/api/v1/patients" -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" -d "$BODY")"
 
 echo "4b. Day 2 API behaviour"
 expect "login with too-short password fails validation" 400 "$(code -X POST "$BASE_URL/auth/login" -H 'Content-Type: application/json' -d '{"email":"testuser@test.com","password":"short"}')"
-expect "unknown patient id returns 404" 404 "$(code "$BASE_URL/api/patients/00000000-0000-0000-0000-000000000000" -H "Authorization: Bearer $TOKEN")"
-expect "malformed id returns 400" 400 "$(code "$BASE_URL/api/patients/not-a-uuid" -H "Authorization: Bearer $TOKEN")"
+expect "unknown patient id returns 404" 404 "$(code "$BASE_URL/api/v1/patients/00000000-0000-0000-0000-000000000000" -H "Authorization: Bearer $TOKEN")"
+expect "malformed id returns 400" 400 "$(code "$BASE_URL/api/v1/patients/not-a-uuid" -H "Authorization: Bearer $TOKEN")"
 BAD=$(printf '{"name":"Bad Date","email":"bad_%s@example.com","address":"x","dateOfBirth":"31-12-1995","registeredDate":"2024-11-28"}' "$(date +%s)")
-expect "malformed date returns 400 (not 500)" 400 "$(code -X POST "$BASE_URL/api/patients" -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" -d "$BAD")"
-expect "delete unknown patient returns 404" 404 "$(code -X DELETE "$BASE_URL/api/patients/00000000-0000-0000-0000-000000000000" -H "Authorization: Bearer $TOKEN")"
+expect "malformed date returns 400 (not 500)" 400 "$(code -X POST "$BASE_URL/api/v1/patients" -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" -d "$BAD")"
+expect "delete unknown patient returns 404" 404 "$(code -X DELETE "$BASE_URL/api/v1/patients/00000000-0000-0000-0000-000000000000" -H "Authorization: Bearer $TOKEN")"
+
+echo "4c. Day 4 pagination, sorting and search"
+page_body=$(curl -s "$BASE_URL/api/v1/patients?size=2&sort=name,asc" -H "Authorization: Bearer $TOKEN")
+if echo "$page_body" | grep -q '"totalElements"' && echo "$page_body" | grep -q '"content"'; then pass "list returns a paged envelope"; else fail "list did not return a paged envelope"; fi
+expect "unknown sort field is rejected" 400 "$(code "$BASE_URL/api/v1/patients?sort=password,asc" -H "Authorization: Bearer $TOKEN")"
+search_body=$(curl -s "$BASE_URL/api/v1/patients?search=$EMAIL" -H "Authorization: Bearer $TOKEN")
+if echo "$search_body" | grep -q "\"totalElements\":1,"; then pass "search finds the patient just created"; else fail "search did not find the new patient"; fi
 
 echo "5. Downstream effects (read from container logs)"
 if command -v docker >/dev/null 2>&1 && docker compose ps >/dev/null 2>&1; then

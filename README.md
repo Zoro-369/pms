@@ -14,7 +14,7 @@ Client
   v
 API Gateway :4004  (Spring Cloud Gateway, JwtValidation filter)
   |-- /auth/**          --> Auth Service :4005      --> Postgres (auth-service-db)
-  |-- /api/patients/**  --> Patient Service :4000   --> Postgres (patient-service-db)
+  |-- /api/v1/patients/**  --> Patient Service :4000   --> Postgres (patient-service-db)
   |        (JWT checked via Auth Service GET /validate)      |-- gRPC --> Billing Service :9001 (stub)
   |                                                          '-- Kafka topic "patient" (protobuf)
   |                                                                    |
@@ -24,7 +24,7 @@ API Gateway :4004  (Spring Cloud Gateway, JwtValidation filter)
 
 | Service | Port | Role |
 |---|---|---|
-| api-gateway | 4004 | Single entry point, routing, JWT check on `/api/patients/**` |
+| api-gateway | 4004 | Single entry point, routing, JWT check on `/api/v1/patients/**` |
 | auth-service | 4005 | Login, JWT issue and validation (BCrypt, HS256) |
 | patient-service | 4000 | Patient CRUD; calls billing over gRPC and publishes a Kafka event on create |
 | billing-service | 4001 / 9001 | gRPC `CreateBillingAccount` (currently a stub) |
@@ -47,6 +47,36 @@ docker compose up --build -d
 ./scripts/smoke-test.sh
 ```
 
+## API
+
+All patient endpoints are under `/api/v1/patients` and need `Authorization: Bearer <token>`.
+
+| Method | Path | Success | Errors |
+|---|---|---|---|
+| GET | `/api/v1/patients` | 200, paged list | 400 bad sort field, 401 |
+| GET | `/api/v1/patients/{id}` | 200 | 400 bad id, 404 |
+| POST | `/api/v1/patients` | 201 + `Location` | 400 validation, 409 duplicate email |
+| PUT | `/api/v1/patients/{id}` | 200 | 400, 404, 409 |
+| DELETE | `/api/v1/patients/{id}` | 204 | 404 |
+
+**List parameters:** `page` (0-based), `size` (default 20, max 100), `sort=field,asc|desc`
+(`name`, `email`, `dateOfBirth`, `registeredDate`), `search` (text in name or email, case-insensitive).
+
+```json
+{
+  "content": [{"id": "...", "name": "Alice Johnson", "email": "alice.johnson@example.com",
+               "address": "789 Oak St, Capital City", "dateOfBirth": "1978-03-12"}],
+  "page": 0, "size": 20, "totalElements": 15, "totalPages": 1, "first": true, "last": true
+}
+```
+
+Errors use RFC 7807 `application/problem+json`, for example:
+
+```json
+{"title": "Invalid request", "status": 400, "detail": "Validation failed",
+ "errors": {"email": "Email should be valid"}}
+```
+
 Useful commands:
 
 ```bash
@@ -66,9 +96,9 @@ Optional host ports for debugging: Postgres on `127.0.0.1:5001` (auth) and `5002
 TOKEN=$(curl -s -X POST localhost:4004/auth/login -H 'Content-Type: application/json' \
   -d '{"email":"testuser@test.com","password":"password123"}' | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
 
-curl -s localhost:4004/api/patients -H "Authorization: Bearer $TOKEN"
+curl -s localhost:4004/api/v1/patients -H "Authorization: Bearer $TOKEN"
 
-curl -s -X POST localhost:4004/api/patients -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+curl -s -X POST localhost:4004/api/v1/patients -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"name":"Jane Doe","email":"jane@example.com","address":"1 Main St","dateOfBirth":"1995-09-09","registeredDate":"2024-11-28"}'
 
 docker compose logs analytics-service | grep jane@example.com   # the Kafka event arrived
@@ -96,16 +126,27 @@ deployed to LocalStack with `infrastructure/localstack-deploy.sh`. It is separat
 - gRPC calls have no deadline, retry or circuit breaker.
 - Billing and analytics are stubs.
 - The JWT `role` claim is issued but not enforced (no RBAC); the signing secret is a shared symmetric key.
-- `GET /api/patients` is not paginated; some error responses use 400 where 404 or 409 is more appropriate.
+- `GET /api/v1/patients` is not paginated; some error responses use 400 where 404 or 409 is more appropriate.
 - Test coverage is limited to a few integration tests that need the full stack running.
 
 ## What I changed
+- **Docker Compose stack** (Postgres x2, single-node Kafka, all services), `.env`-based secrets and an end-to-end smoke test.
+- **API fixes:** correct status codes (404, 409, 201), RFC 7807 error responses, typed dates, validation on login.
+- **Flyway migrations** replacing `ddl-auto=update` and `data.sql`; dev seed data isolated from the schema.
+- **Pagination, sorting and search**, and API versioning under `/api/v1`.
+- **k6 benchmarks** with a documented baseline, and a warm-up fix after finding a cold-start p99 artifact.
 
-- Added a Docker Compose setup (Postgres x2, single-node Kafka, all services), an `.env`-based configuration for secrets, and an end-to-end smoke test.
-- Set the analytics service port explicitly so it matches its Dockerfile.
-- Added a baseline performance benchmark (k6) and documented the results.
-- Fixed API status codes, error format, date handling and login validation.
-- Replace ddl-auto and data.sql with Flyway migrations.
+## Database
+
+Schema is managed by Flyway (`db/migration`); Hibernate only validates it (`ddl-auto=validate`).
+Sample data lives in `db/seed` and is enabled only in Docker Compose and LocalStack, never in the base migrations.
+
+## Testing and benchmarks
+
+- `./scripts/smoke-test.sh`: end-to-end checks against the running stack (auth, CRUD, status codes, paging, billing and Kafka side effects).
+- `mvn -f integration-tests/pom.xml test`: RestAssured tests through the gateway (stack must be running).
+- `k6 run perf/k6/baseline.js`: load test; results and analysis in [docs/benchmarks/baseline.md](docs/benchmarks/baseline.md).
+- 
 ## Project layout
 
 ```

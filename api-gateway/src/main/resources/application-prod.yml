@@ -12,13 +12,13 @@ spring:
           filters:
             - StripPrefix=1
 
-        # Route for /api/patients/** to patient-service
+        # Versioned public API: /api/v1/patients/** -> patient-service /patients/**
         - id: patient-service-route
           uri: http://host.docker.internal:4000
           predicates:
-            - Path=/api/patients/**
+            - Path=/api/v1/patients/**
           filters:
-            - StripPrefix=1
+            - StripPrefix=2   # strips 'api' and 'v1'
             - JwtValidation
 
         # Route for /api/docs/patients to patient-service /v3/api-docs
@@ -30,7 +30,7 @@ spring:
             - RewritePath=/api-docs/patients,/v3/api-docs
 
         - id: api-docs-auth-route
-          uri: http:/host.docker.internal:4005
+          uri: http://host.docker.internal:4005
           predicates:
             - Path=/api-docs/auth
           filters:

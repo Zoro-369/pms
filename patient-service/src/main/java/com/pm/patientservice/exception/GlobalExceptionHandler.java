@@ -45,6 +45,14 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     return handleExceptionInternal(ex, problem, headers, status, request);
   }
 
+  @ExceptionHandler(InvalidQueryException.class)
+  public ProblemDetail handleInvalidQuery(InvalidQueryException ex) {
+    ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST,
+            ex.getMessage());
+    problem.setTitle("Invalid query");
+    return problem;
+  }
+
   @ExceptionHandler(EmailAlreadyExistsException.class)
   public ProblemDetail handleEmailAlreadyExists(EmailAlreadyExistsException ex) {
     log.warn("Duplicate email rejected: {}", ex.getMessage());

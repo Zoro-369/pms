@@ -87,3 +87,4 @@ Thumbs.db
 .env
 
 perf/results/*-summary.json
+docs/personal

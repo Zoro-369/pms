@@ -1,5 +1,6 @@
 package com.pm.patientservice.controller;
 
+import com.pm.patientservice.dto.PagedResponse;
 import com.pm.patientservice.dto.PatientRequestDTO;
 import com.pm.patientservice.dto.PatientResponseDTO;
 import com.pm.patientservice.dto.validators.CreatePatientValidationGroup;
@@ -8,8 +9,10 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.groups.Default;
 import java.net.URI;
-import java.util.List;
 import java.util.UUID;
+import org.springdoc.core.annotations.ParameterObject;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -19,6 +22,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -33,10 +37,13 @@ public class PatientController {
   }
 
   @GetMapping
-  @Operation(summary = "Get Patients")
-  public ResponseEntity<List<PatientResponseDTO>> getPatients() {
-    List<PatientResponseDTO> patients = patientService.getPatients();
-    return ResponseEntity.ok().body(patients);
+  @Operation(summary = "Get Patients (paged, sortable, searchable)",
+          description = "page (0-based), size (default 20, max 100), sort=field,asc|desc "
+                  + "(name, email, dateOfBirth, registeredDate), search = text in name or email")
+  public ResponseEntity<PagedResponse<PatientResponseDTO>> getPatients(
+          @RequestParam(required = false) String search,
+          @ParameterObject @PageableDefault(size = 20, sort = "name") Pageable pageable) {
+    return ResponseEntity.ok(patientService.getPatients(search, pageable));
   }
 
   @GetMapping("/{id}")
@@ -54,9 +61,9 @@ public class PatientController {
     PatientResponseDTO patientResponseDTO = patientService.createPatient(
             patientRequestDTO);
 
-    // Location uses the public path exposed by the gateway (/api/patients), not this service's
+    // Location uses the public path exposed by the gateway (/api/v1/patients), not this service's
     // internal /patients path, because clients only ever see the gateway.
-    URI location = URI.create("/api/patients/" + patientResponseDTO.getId());
+    URI location = URI.create("/api/v1/patients/" + patientResponseDTO.getId());
     return ResponseEntity.created(location).body(patientResponseDTO);
   }
 
