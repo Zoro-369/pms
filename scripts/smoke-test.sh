@@ -58,17 +58,21 @@ if echo "$search_body" | grep -q "\"totalElements\":1,"; then pass "search finds
 
 echo "5. Downstream effects (read from container logs)"
 if command -v docker >/dev/null 2>&1 && docker compose ps >/dev/null 2>&1; then
-  found=0
+  analytics_ok=0
+  billing_ok=0
   for _ in $(seq 1 10); do
-    if docker compose logs --tail=200 analytics-service 2>/dev/null | grep -q "$EMAIL"; then found=1; break; fi
+    # Capture the logs first, then grep. Piping `docker compose logs` straight into `grep -q`
+    # breaks under `set -o pipefail`: grep exits at the first match, docker gets SIGPIPE, and the
+    # whole pipeline reports failure even though the text was found.
+    analytics_logs=$(docker compose logs --since 5m analytics-service 2>/dev/null || true)
+    billing_logs=$(docker compose logs --since 5m billing-service 2>/dev/null || true)
+    if grep -q "$EMAIL" <<<"$analytics_logs"; then analytics_ok=1; fi
+    if grep -q "$EMAIL" <<<"$billing_logs"; then billing_ok=1; fi
+    if [ "$analytics_ok" = "1" ] && [ "$billing_ok" = "1" ]; then break; fi
     sleep 2
   done
-  if [ "$found" = "1" ]; then pass "analytics-service consumed the Kafka event"; else fail "analytics-service did not log the event for $EMAIL"; fi
-  if docker compose logs --tail=200 billing-service 2>/dev/null | grep -q "createBillingAccount request received"; then
-    pass "billing-service received the gRPC call"
-  else
-    fail "billing-service did not log a gRPC request"
-  fi
+  if [ "$analytics_ok" = "1" ]; then pass "analytics-service consumed the Kafka event"; else fail "analytics-service did not log the event for $EMAIL"; fi
+  if [ "$billing_ok" = "1" ]; then pass "billing-service received the gRPC call for this patient"; else fail "billing-service did not log a gRPC request for $EMAIL"; fi
 else
   echo "  SKIP  docker compose not available here; check logs manually"
 fi

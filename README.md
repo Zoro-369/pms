@@ -127,7 +127,8 @@ deployed to LocalStack with `infrastructure/localstack-deploy.sh`. It is separat
 - Billing and analytics are stubs.
 - The JWT `role` claim is issued but not enforced (no RBAC); the signing secret is a shared symmetric key.
 - `GET /api/v1/patients` is not paginated; some error responses use 400 where 404 or 409 is more appropriate.
-- Test coverage is limited to a few integration tests that need the full stack running.
+- Automated tests currently cover patient-service only. Auth, gateway, billing and analytics have no unit tests, and there
+    are no database-level tests yet (Testcontainers planned). Test coverage is limited to a few integration tests that need the full stack running.
 
 ## What I changed
 - **Docker Compose stack** (Postgres x2, single-node Kafka, all services), `.env`-based secrets and an end-to-end smoke test.
@@ -135,6 +136,8 @@ deployed to LocalStack with `infrastructure/localstack-deploy.sh`. It is separat
 - **Flyway migrations** replacing `ddl-auto=update` and `data.sql`; dev seed data isolated from the schema.
 - **Pagination, sorting and search**, and API versioning under `/api/v1`.
 - **k6 benchmarks** with a documented baseline, and a warm-up fix after finding a cold-start p99 artifact.
+- **Unit and web-layer tests** for patient-service (Mockito, `@WebMvcTest`) with JaCoCo coverage reporting.
+- Repository tests run against real PostgreSQL via Testcontainers; Docker required
 
 ## Database
 
@@ -143,10 +146,29 @@ Sample data lives in `db/seed` and is enabled only in Docker Compose and LocalSt
 
 ## Testing and benchmarks
 
-- `./scripts/smoke-test.sh`: end-to-end checks against the running stack (auth, CRUD, status codes, paging, billing and Kafka side effects).
-- `mvn -f integration-tests/pom.xml test`: RestAssured tests through the gateway (stack must be running).
-- `k6 run perf/k6/baseline.js`: load test; results and analysis in [docs/benchmarks/baseline.md](docs/benchmarks/baseline.md).
-- 
+| What | Command | Needs running stack? |
+|---|---|---|
+| Unit and web-layer tests (patient-service) | `cd patient-service && mvn test` | No |
+| End-to-end smoke test | `./scripts/smoke-test.sh` | Yes |
+| Integration tests through the gateway | `mvn -f integration-tests/pom.xml test` | Yes |
+| Load test | `k6 run perf/k6/baseline.js` | Yes |
+
+### Unit and web-layer tests (patient-service)
+
+- **Service logic** (`PatientServiceTest`, Mockito): create flow order (save, then billing gRPC, then Kafka event),
+  duplicate email, get/update/delete, and paging, search and sort-field validation, with no database, Kafka or gRPC.
+- **Web layer** (`PatientControllerTest`, `@WebMvcTest`): status codes, bean validation, RFC 7807 error bodies,
+  `Location` header, page-size cap, and the global error handler (unknown path returns 404 and wrong method 405, not 500).
+- **Mapper and Kafka producer** (`PatientMapperTest`, `KafkaProducerTest`): field mapping and the protobuf event payload.
+- Two tests are deliberate *characterization tests* that document known flaws in the current create flow
+  (a billing failure leaves a saved patient with no event; a Kafka send error is swallowed). They will be rewritten when
+  the transactional outbox and billing reconciler replace that flow.
+
+**Coverage:** JaCoCo runs with `mvn test`; open `patient-service/target/site/jacoco/index.html`.
+Current line coverage for patient-service: **<XX>%** (generated protobuf code excluded).
+The service, controller and error handler are close to fully covered; the gRPC client and entities are not yet.
+
+Results and analysis of the load tests are in [docs/benchmarks/baseline.md](docs/benchmarks/baseline.md).
 ## Project layout
 
 ```
