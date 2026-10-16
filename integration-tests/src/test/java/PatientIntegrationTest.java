@@ -6,6 +6,7 @@ import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.notNullValue;
 
 import io.restassured.RestAssured;
+import io.restassured.response.Response;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -218,5 +219,66 @@ public class PatientIntegrationTest {
             .statusCode(200)
             .body("content", hasSize(0))
             .body("totalElements", equalTo(0));
+  }
+
+  // ------------------------------------------------------------------ idempotency (Day 7)
+
+  private static String createBody(String name, String email) {
+    return String.format(
+            "{\"name\": \"%s\", \"email\": \"%s\", \"address\": \"1 Test St\","
+                    + " \"dateOfBirth\": \"1990-01-01\", \"registeredDate\": \"2024-01-01\"}",
+            name, email);
+  }
+
+  @Test
+  public void shouldReplayTheSamePatientWhenTheSameIdempotencyKeyIsRepeated() {
+    String key = "it-key-" + UUID.randomUUID();
+    String email = "idem-" + tag + "-replay@example.com";
+    String body = createBody("Idem Replay " + tag, email);
+
+    Response first = authed().header("Idempotency-Key", key).contentType("application/json")
+            .body(body).when().post(PATIENTS);
+    first.then().statusCode(201);
+    String id = first.jsonPath().getString("id");
+    createdIds.add(id);
+
+    authed().header("Idempotency-Key", key).contentType("application/json")
+            .body(body).when().post(PATIENTS)
+            .then()
+            .statusCode(201)
+            .header("Idempotent-Replayed", equalTo("true"))
+            .body("id", equalTo(id));
+
+    // the retry created nothing new
+    authed().queryParam("search", email).when().get(PATIENTS)
+            .then().statusCode(200).body("totalElements", equalTo(1));
+  }
+
+  @Test
+  public void shouldRejectTheSameKeyWithADifferentBody() {
+    String key = "it-key-" + UUID.randomUUID();
+
+    Response first = authed().header("Idempotency-Key", key).contentType("application/json")
+            .body(createBody("Idem One " + tag, "idem-" + tag + "-one@example.com"))
+            .when().post(PATIENTS);
+    first.then().statusCode(201);
+    createdIds.add(first.jsonPath().getString("id"));
+
+    authed().header("Idempotency-Key", key).contentType("application/json")
+            .body(createBody("Idem Two " + tag, "idem-" + tag + "-two@example.com"))
+            .when().post(PATIENTS)
+            .then()
+            .statusCode(422)
+            .body("title", equalTo("Idempotency key reused"));
+  }
+
+  @Test
+  public void shouldRejectAnInvalidIdempotencyKey() {
+    authed().header("Idempotency-Key", "has space").contentType("application/json")
+            .body(createBody("Idem Bad " + tag, "idem-" + tag + "-bad@example.com"))
+            .when().post(PATIENTS)
+            .then()
+            .statusCode(400)
+            .body("detail", containsString("Idempotency-Key"));
   }
 }

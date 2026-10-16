@@ -4,6 +4,7 @@ import com.pm.patientservice.dto.PagedResponse;
 import com.pm.patientservice.dto.PatientRequestDTO;
 import com.pm.patientservice.dto.PatientResponseDTO;
 import com.pm.patientservice.dto.validators.CreatePatientValidationGroup;
+import com.pm.patientservice.service.IdempotentPatientService;
 import com.pm.patientservice.service.PatientService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -21,6 +22,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -31,9 +33,12 @@ import org.springframework.web.bind.annotation.RestController;
 public class PatientController {
 
   private final PatientService patientService;
+  private final IdempotentPatientService idempotentPatientService;
 
-  public PatientController(PatientService patientService) {
+  public PatientController(PatientService patientService,
+                           IdempotentPatientService idempotentPatientService) {
     this.patientService = patientService;
+    this.idempotentPatientService = idempotentPatientService;
   }
 
   @GetMapping
@@ -53,18 +58,34 @@ public class PatientController {
   }
 
   @PostMapping
-  @Operation(summary = "Create a new Patient")
+  @Operation(summary = "Create a new Patient",
+          description = "Send an Idempotency-Key header (1-255 printable ASCII characters) to make "
+                  + "retries safe: repeating the same request returns the original response with an "
+                  + "Idempotent-Replayed: true header and creates nothing new.")
   public ResponseEntity<PatientResponseDTO> createPatient(
+          @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
           @Validated({Default.class, CreatePatientValidationGroup.class})
           @RequestBody PatientRequestDTO patientRequestDTO) {
 
-    PatientResponseDTO patientResponseDTO = patientService.createPatient(
-            patientRequestDTO);
+    if (idempotencyKey == null) {
+      return created(patientService.createPatient(patientRequestDTO), false);
+    }
 
-    // Location uses the public path exposed by the gateway (/api/v1/patients), not this service's
-    // internal /patients path, because clients only ever see the gateway.
-    URI location = URI.create("/api/v1/patients/" + patientResponseDTO.getId());
-    return ResponseEntity.created(location).body(patientResponseDTO);
+    IdempotentPatientService.Result result =
+            idempotentPatientService.createPatient(idempotencyKey, patientRequestDTO);
+    return created(result.patient(), result.replayed());
+  }
+
+  // Location uses the public path exposed by the gateway (/api/v1/patients), not this service's
+  // internal /patients path, because clients only ever see the gateway.
+  private static ResponseEntity<PatientResponseDTO> created(PatientResponseDTO patient,
+                                                            boolean replayed) {
+    URI location = URI.create("/api/v1/patients/" + patient.getId());
+    ResponseEntity.BodyBuilder builder = ResponseEntity.created(location);
+    if (replayed) {
+      builder.header("Idempotent-Replayed", "true");
+    }
+    return builder.body(patient);
   }
 
   @PutMapping("/{id}")

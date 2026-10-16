@@ -56,6 +56,24 @@ expect "unknown sort field is rejected" 400 "$(code "$BASE_URL/api/v1/patients?s
 search_body=$(curl -s "$BASE_URL/api/v1/patients?search=$EMAIL" -H "Authorization: Bearer $TOKEN")
 if echo "$search_body" | grep -q "\"totalElements\":1,"; then pass "search finds the patient just created"; else fail "search did not find the new patient"; fi
 
+echo "4d. Day 7 idempotency (Idempotency-Key header)"
+IDEM_KEY="smoke-key-$(date +%s)-$$"
+IDEM_EMAIL="idem_$(date +%s)@example.com"
+IDEM_BODY=$(printf '{"name":"Idem Test","email":"%s","address":"1 Test Street","dateOfBirth":"1995-09-09","registeredDate":"2024-11-28"}' "$IDEM_EMAIL")
+idem_post() { curl -s -i -X POST "$BASE_URL/api/v1/patients" -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" -H "Idempotency-Key: $IDEM_KEY" -d "$1"; }
+first=$(idem_post "$IDEM_BODY")
+second=$(idem_post "$IDEM_BODY")
+first_id=$(sed -n 's/.*"id":"\([^"]*\)".*/\1/p' <<<"$first" | head -1)
+second_id=$(sed -n 's/.*"id":"\([^"]*\)".*/\1/p' <<<"$second" | head -1)
+if grep -q "^HTTP/[0-9.]* 201" <<<"$first" && [ -n "$first_id" ]; then pass "first request with key creates the patient (201)"; else fail "first keyed request did not return 201 with an id"; fi
+if grep -q "^HTTP/[0-9.]* 201" <<<"$second" && [ "$first_id" = "$second_id" ]; then pass "repeat with same key returns the same patient"; else fail "repeat did not return the same patient ($first_id vs $second_id)"; fi
+if grep -qi "^idempotent-replayed: true" <<<"$second"; then pass "repeat is marked Idempotent-Replayed"; else fail "repeat was not marked as replayed"; fi
+count_body=$(curl -s "$BASE_URL/api/v1/patients?search=$IDEM_EMAIL" -H "Authorization: Bearer $TOKEN")
+if grep -q "\"totalElements\":1," <<<"$count_body"; then pass "exactly one patient exists for the key"; else fail "expected exactly one patient for $IDEM_EMAIL"; fi
+DIFF_BODY=$(printf '{"name":"Different Name","email":"%s","address":"1 Test Street","dateOfBirth":"1995-09-09","registeredDate":"2024-11-28"}' "$IDEM_EMAIL")
+expect "same key with a different body is rejected" 422 "$(code -X POST "$BASE_URL/api/v1/patients" -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" -H "Idempotency-Key: $IDEM_KEY" -d "$DIFF_BODY")"
+expect "invalid Idempotency-Key is rejected" 400 "$(code -X POST "$BASE_URL/api/v1/patients" -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" -H 'Idempotency-Key: has space' -d "$IDEM_BODY")"
+
 echo "5. Downstream effects (read from container logs)"
 if command -v docker >/dev/null 2>&1 && docker compose ps >/dev/null 2>&1; then
   analytics_ok=0

@@ -53,6 +53,23 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     return problem;
   }
 
+  @ExceptionHandler(IdempotencyKeyReusedException.class)
+  public ProblemDetail handleIdempotencyKeyReused(IdempotencyKeyReusedException ex) {
+    ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY,
+            ex.getMessage());
+    problem.setTitle("Idempotency key reused");
+    return problem;
+  }
+
+  @ExceptionHandler(IdempotencyRequestInProgressException.class)
+  public ProblemDetail handleIdempotencyRequestInProgress(
+          IdempotencyRequestInProgressException ex) {
+    ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT,
+            ex.getMessage() + "; retry shortly");
+    problem.setTitle("Request in progress");
+    return problem;
+  }
+
   @ExceptionHandler(EmailAlreadyExistsException.class)
   public ProblemDetail handleEmailAlreadyExists(EmailAlreadyExistsException ex) {
     log.warn("Duplicate email rejected: {}", ex.getMessage());

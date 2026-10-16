@@ -25,8 +25,11 @@ import com.pm.patientservice.dto.PagedResponse;
 import com.pm.patientservice.dto.PatientRequestDTO;
 import com.pm.patientservice.dto.PatientResponseDTO;
 import com.pm.patientservice.exception.EmailAlreadyExistsException;
+import com.pm.patientservice.exception.IdempotencyKeyReusedException;
+import com.pm.patientservice.exception.IdempotencyRequestInProgressException;
 import com.pm.patientservice.exception.InvalidQueryException;
 import com.pm.patientservice.exception.PatientNotFoundException;
+import com.pm.patientservice.service.IdempotentPatientService;
 import com.pm.patientservice.service.PatientService;
 import java.time.LocalDate;
 import java.util.LinkedHashMap;
@@ -56,6 +59,7 @@ class PatientControllerTest {
     @Autowired private ObjectMapper objectMapper;
 
     @MockitoBean private PatientService patientService;
+    @MockitoBean private IdempotentPatientService idempotentPatientService;
 
     // ------------------------------------------------------------------ helpers
 
@@ -249,6 +253,94 @@ class PatientControllerTest {
         mockMvc.perform(post("/patients").contentType(MediaType.APPLICATION_JSON).content(validBody()))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.title").value("Duplicate email"));
+    }
+
+    // ------------------------------------------------------------------ POST with Idempotency-Key
+
+    @Test
+    void createPatient_withIdempotencyKey_usesIdempotentServiceAndIsNotMarkedReplayed()
+            throws Exception {
+        when(idempotentPatientService.createPatient(eq("key-1"), any(PatientRequestDTO.class)))
+                .thenReturn(new IdempotentPatientService.Result(dto(), false));
+
+        mockMvc.perform(post("/patients").header("Idempotency-Key", "key-1")
+                        .contentType(MediaType.APPLICATION_JSON).content(validBody()))
+                .andExpect(status().isCreated())
+                .andExpect(header().doesNotExist("Idempotent-Replayed"))
+                .andExpect(header().string("Location", "/api/v1/patients/" + ID))
+                .andExpect(jsonPath("$.id").value(ID.toString()));
+
+        verify(idempotentPatientService).createPatient(eq("key-1"), any(PatientRequestDTO.class));
+        verifyNoInteractions(patientService);
+    }
+
+    @Test
+    void createPatient_replayedResponse_returnsSameBodyWithReplayHeader() throws Exception {
+        when(idempotentPatientService.createPatient(eq("key-1"), any(PatientRequestDTO.class)))
+                .thenReturn(new IdempotentPatientService.Result(dto(), true));
+
+        mockMvc.perform(post("/patients").header("Idempotency-Key", "key-1")
+                        .contentType(MediaType.APPLICATION_JSON).content(validBody()))
+                .andExpect(status().isCreated())
+                .andExpect(header().string("Idempotent-Replayed", "true"))
+                .andExpect(header().string("Location", "/api/v1/patients/" + ID))
+                .andExpect(jsonPath("$.id").value(ID.toString()))
+                .andExpect(jsonPath("$.email").value("jane@example.com"));
+    }
+
+    @Test
+    void createPatient_keyReusedWithDifferentBody_returns422() throws Exception {
+        when(idempotentPatientService.createPatient(eq("key-1"), any(PatientRequestDTO.class)))
+                .thenThrow(new IdempotencyKeyReusedException("different body"));
+
+        mockMvc.perform(post("/patients").header("Idempotency-Key", "key-1")
+                        .contentType(MediaType.APPLICATION_JSON).content(validBody()))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.title").value("Idempotency key reused"));
+    }
+
+    @Test
+    void createPatient_requestStillInProgress_returns409() throws Exception {
+        when(idempotentPatientService.createPatient(eq("key-1"), any(PatientRequestDTO.class)))
+                .thenThrow(new IdempotencyRequestInProgressException("in progress"));
+
+        mockMvc.perform(post("/patients").header("Idempotency-Key", "key-1")
+                        .contentType(MediaType.APPLICATION_JSON).content(validBody()))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.title").value("Request in progress"));
+    }
+
+    @Test
+    void createPatient_invalidIdempotencyKey_returns400() throws Exception {
+        when(idempotentPatientService.createPatient(eq("bad key"), any(PatientRequestDTO.class)))
+                .thenThrow(new InvalidQueryException("Idempotency-Key must be 1-255 printable ASCII"));
+
+        mockMvc.perform(post("/patients").header("Idempotency-Key", "bad key")
+                        .contentType(MediaType.APPLICATION_JSON).content(validBody()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value(containsString("Idempotency-Key")));
+    }
+
+    @Test
+    void createPatient_withoutKey_doesNotTouchTheIdempotencyService() throws Exception {
+        when(patientService.createPatient(any(PatientRequestDTO.class))).thenReturn(dto());
+
+        mockMvc.perform(post("/patients").contentType(MediaType.APPLICATION_JSON).content(validBody()))
+                .andExpect(status().isCreated())
+                .andExpect(header().doesNotExist("Idempotent-Replayed"));
+
+        verifyNoInteractions(idempotentPatientService);
+    }
+
+    @Test
+    void createPatient_invalidBodyWithKey_failsValidationBeforeTheKeyIsConsumed() throws Exception {
+        String invalid = body("", "not-an-email", null, null, null);
+
+        mockMvc.perform(post("/patients").header("Idempotency-Key", "key-1")
+                        .contentType(MediaType.APPLICATION_JSON).content(invalid))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(idempotentPatientService, patientService);
     }
 
     // ------------------------------------------------------------------ PUT /patients/{id}

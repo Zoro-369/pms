@@ -138,6 +138,7 @@ deployed to LocalStack with `infrastructure/localstack-deploy.sh`. It is separat
 - **k6 benchmarks** with a documented baseline, and a warm-up fix after finding a cold-start p99 artifact.
 - **Unit and web-layer tests** for patient-service (Mockito, `@WebMvcTest`) with JaCoCo coverage reporting.
 - Repository tests run against real PostgreSQL via Testcontainers; Docker required
+- Idempotent create create via Idempotency-Key header.
 
 ## Database
 
