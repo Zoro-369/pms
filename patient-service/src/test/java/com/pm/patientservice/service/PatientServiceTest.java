@@ -19,11 +19,11 @@ import com.pm.patientservice.exception.EmailAlreadyExistsException;
 import com.pm.patientservice.exception.InvalidQueryException;
 import com.pm.patientservice.exception.PatientNotFoundException;
 import com.pm.patientservice.grpc.BillingServiceGrpcClient;
-import com.pm.patientservice.kafka.KafkaProducer;
 import com.pm.patientservice.model.Patient;
 import com.pm.patientservice.repository.PatientRepository;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
+import java.lang.reflect.Method;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
@@ -40,6 +40,7 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.transaction.annotation.Transactional;
 
 /** Pure unit tests: no Spring context, no database, no Kafka, no gRPC. */
 @ExtendWith(MockitoExtension.class)
@@ -49,7 +50,7 @@ class PatientServiceTest {
 
     @Mock private PatientRepository patientRepository;
     @Mock private BillingServiceGrpcClient billingServiceGrpcClient;
-    @Mock private KafkaProducer kafkaProducer;
+    @Mock private OutboxService outboxService;
 
     @InjectMocks private PatientService patientService;
 
@@ -78,23 +79,27 @@ class PatientServiceTest {
 
     // ------------------------------------------------------------------ createPatient
 
-    @Test
-    void createPatient_savesThenCallsBillingThenPublishesEvent() {
-        when(patientRepository.existsByEmail("jane@example.com")).thenReturn(false);
-        when(patientRepository.save(any(Patient.class))).thenAnswer(invocation -> {
+    private void stubSaveAndFlushAssigningId() {
+        when(patientRepository.saveAndFlush(any(Patient.class))).thenAnswer(invocation -> {
             Patient saved = invocation.getArgument(0);
             saved.setId(ID);
             return saved;
         });
+    }
+
+    @Test
+    void createPatient_savesThenRecordsOutboxEventThenCallsBilling() {
+        when(patientRepository.existsByEmail("jane@example.com")).thenReturn(false);
+        stubSaveAndFlushAssigningId();
 
         PatientResponseDTO result =
                 patientService.createPatient(request("Jane Doe", "jane@example.com"));
 
-        InOrder order = inOrder(patientRepository, billingServiceGrpcClient, kafkaProducer);
-        order.verify(patientRepository).save(any(Patient.class));
+        InOrder order = inOrder(patientRepository, outboxService, billingServiceGrpcClient);
+        order.verify(patientRepository).saveAndFlush(any(Patient.class));
+        order.verify(outboxService).recordPatientCreated(any(Patient.class));
         order.verify(billingServiceGrpcClient)
                 .createBillingAccount(ID.toString(), "Jane Doe", "jane@example.com");
-        order.verify(kafkaProducer).sendEvent(any(Patient.class));
 
         assertThat(result.getId()).isEqualTo(ID.toString());
         assertThat(result.getName()).isEqualTo("Jane Doe");
@@ -105,16 +110,12 @@ class PatientServiceTest {
     @Test
     void createPatient_mapsAllRequestFieldsOntoTheSavedEntity() {
         when(patientRepository.existsByEmail(anyString())).thenReturn(false);
-        when(patientRepository.save(any(Patient.class))).thenAnswer(invocation -> {
-            Patient saved = invocation.getArgument(0);
-            saved.setId(ID);
-            return saved;
-        });
+        stubSaveAndFlushAssigningId();
 
         patientService.createPatient(request("Jane Doe", "jane@example.com"));
 
         ArgumentCaptor<Patient> captor = ArgumentCaptor.forClass(Patient.class);
-        verify(patientRepository).save(captor.capture());
+        verify(patientRepository).saveAndFlush(captor.capture());
         Patient saved = captor.getValue();
         assertThat(saved.getName()).isEqualTo("Jane Doe");
         assertThat(saved.getAddress()).isEqualTo("1 Main St");
@@ -129,32 +130,35 @@ class PatientServiceTest {
         assertThatThrownBy(() -> patientService.createPatient(request("Jane", "jane@example.com")))
                 .isInstanceOf(EmailAlreadyExistsException.class);
 
-        verify(patientRepository, never()).save(any(Patient.class));
-        verifyNoInteractions(billingServiceGrpcClient, kafkaProducer);
+        verify(patientRepository, never()).saveAndFlush(any(Patient.class));
+        verifyNoInteractions(outboxService, billingServiceGrpcClient);
     }
 
     /**
-     * Characterization test: pins the CURRENT, known-flawed behaviour. The patient is committed
-     * before billing is called, so a billing failure leaves a saved patient with no billing account
-     * and no event. This test should be changed when the transactional outbox and the billing
-     * reconciler replace this flow.
+     * The exception must propagate out of the @Transactional method, because that is what makes
+     * Spring roll back the patient row and the outbox row. (The real rollback against PostgreSQL is
+     * proven in PatientCreationAtomicityTest; with a mocked repository it cannot be observed here.)
      */
     @Test
-    void createPatient_billingFailure_currentlyLeavesSavedPatientAndNoEvent() {
+    void createPatient_billingFailure_propagatesSoTheTransactionRollsBack() {
         when(patientRepository.existsByEmail(anyString())).thenReturn(false);
-        when(patientRepository.save(any(Patient.class))).thenAnswer(invocation -> {
-            Patient saved = invocation.getArgument(0);
-            saved.setId(ID);
-            return saved;
-        });
+        stubSaveAndFlushAssigningId();
         when(billingServiceGrpcClient.createBillingAccount(anyString(), anyString(), anyString()))
                 .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
 
         assertThatThrownBy(() -> patientService.createPatient(request("Jane", "jane@example.com")))
                 .isInstanceOf(StatusRuntimeException.class);
 
-        verify(patientRepository).save(any(Patient.class));
-        verifyNoInteractions(kafkaProducer);
+        // the outbox row was written before billing, inside the same (rolled back) transaction
+        verify(outboxService).recordPatientCreated(any(Patient.class));
+    }
+
+    /** Guards against someone removing the annotation and silently reintroducing the dual write. */
+    @Test
+    void createPatient_runsInsideATransaction() throws Exception {
+        Method method = PatientService.class.getMethod("createPatient", PatientRequestDTO.class);
+
+        assertThat(method.isAnnotationPresent(Transactional.class)).isTrue();
     }
 
     // ------------------------------------------------------------------ getPatient

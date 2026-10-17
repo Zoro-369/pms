@@ -16,6 +16,7 @@ import java.util.HexFormat;
 import java.util.regex.Pattern;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Makes POST /patients safe to retry. The client sends an Idempotency-Key header:
@@ -27,9 +28,12 @@ import org.springframework.stereotype.Service;
  *   <li>same key while the first request is still running: reject with 409.
  * </ul>
  *
- * Known limitation (fixed by the transactional outbox work): creating the patient and completing
- * the key are separate steps, so a crash between them leaves the key IN_PROGRESS until it is purged.
- * On a normal failure the key is released so the client can retry.
+ * Creating the patient (with its outbox event) and completing the key happen in ONE database
+ * transaction, so there is no window where a patient exists but its key is not marked complete.
+ * The initial claim of the key is deliberately a separate, immediately committed step so that
+ * concurrent requests can see it. If the process dies after the claim but before the transaction
+ * commits, the key stays IN_PROGRESS until a purge job removes it (not implemented yet); on a
+ * normal failure the key is released so the client can retry.
  */
 @Service
 public class IdempotentPatientService {
@@ -42,12 +46,15 @@ public class IdempotentPatientService {
     private final IdempotencyRecordRepository repository;
     private final PatientService patientService;
     private final ObjectMapper objectMapper;
+    private final TransactionTemplate transactionTemplate;
 
     public IdempotentPatientService(IdempotencyRecordRepository repository,
-                                    PatientService patientService, ObjectMapper objectMapper) {
+                                    PatientService patientService, ObjectMapper objectMapper,
+                                    TransactionTemplate transactionTemplate) {
         this.repository = repository;
         this.patientService = patientService;
         this.objectMapper = objectMapper;
+        this.transactionTemplate = transactionTemplate;
     }
 
     public Result createPatient(String idempotencyKey, PatientRequestDTO request) {
@@ -59,10 +66,15 @@ public class IdempotentPatientService {
         }
 
         try {
-            PatientResponseDTO created = patientService.createPatient(request);
-            repository.markCompleted(idempotencyKey, HttpStatus.CREATED.value(), toJson(created));
-            return new Result(created, false);
+            // One transaction: patient + outbox event + key completion commit or roll back together.
+            // PatientService.createPatient and markCompleted both join this transaction.
+            return transactionTemplate.execute(status -> {
+                PatientResponseDTO created = patientService.createPatient(request);
+                repository.markCompleted(idempotencyKey, HttpStatus.CREATED.value(), toJson(created));
+                return new Result(created, false);
+            });
         } catch (RuntimeException e) {
+            // Everything above rolled back, so no patient exists. Free the key so the client can retry.
             repository.releaseInProgress(idempotencyKey);
             throw e;
         }

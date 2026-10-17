@@ -7,7 +7,6 @@ import com.pm.patientservice.exception.EmailAlreadyExistsException;
 import com.pm.patientservice.exception.InvalidQueryException;
 import com.pm.patientservice.exception.PatientNotFoundException;
 import com.pm.patientservice.grpc.BillingServiceGrpcClient;
-import com.pm.patientservice.kafka.KafkaProducer;
 import com.pm.patientservice.mapper.PatientMapper;
 import com.pm.patientservice.model.Patient;
 import com.pm.patientservice.repository.PatientRepository;
@@ -32,14 +31,14 @@ public class PatientService {
 
   private final PatientRepository patientRepository;
   private final BillingServiceGrpcClient billingServiceGrpcClient;
-  private final KafkaProducer kafkaProducer;
+  private final OutboxService outboxService;
 
   public PatientService(PatientRepository patientRepository,
                         BillingServiceGrpcClient billingServiceGrpcClient,
-                        KafkaProducer kafkaProducer) {
+                        OutboxService outboxService) {
     this.patientRepository = patientRepository;
     this.billingServiceGrpcClient = billingServiceGrpcClient;
-    this.kafkaProducer = kafkaProducer;
+    this.outboxService = outboxService;
   }
 
   @Transactional(readOnly = true)
@@ -80,19 +79,29 @@ public class PatientService {
             .orElseThrow(() -> new PatientNotFoundException("Patient not found with ID: " + id));
   }
 
+  /**
+   * One database transaction covers the patient row and its outbox event row, so they commit or
+   * roll back together. The event is NOT sent to Kafka here; the outbox relay publishes it after
+   * commit. The billing call is the last step before commit: if billing fails, the exception
+   * rolls back the patient and the outbox row, so no half-created patient is left behind.
+   * (Holding a transaction open across a remote call is a temporary trade-off; the billing
+   * reconciler later replaces this call with an asynchronous step.)
+   */
+  @Transactional
   public PatientResponseDTO createPatient(PatientRequestDTO patientRequestDTO) {
     if (patientRepository.existsByEmail(patientRequestDTO.getEmail())) {
       throw new EmailAlreadyExistsException(
               "A patient with this email already exists: " + patientRequestDTO.getEmail());
     }
 
-    Patient newPatient = patientRepository.save(
+    // saveAndFlush so a unique-constraint race on email fails here, before any later step runs
+    Patient newPatient = patientRepository.saveAndFlush(
             PatientMapper.toModel(patientRequestDTO));
+
+    outboxService.recordPatientCreated(newPatient);
 
     billingServiceGrpcClient.createBillingAccount(newPatient.getId().toString(),
             newPatient.getName(), newPatient.getEmail());
-
-    kafkaProducer.sendEvent(newPatient);
 
     return PatientMapper.toDTO(newPatient);
   }

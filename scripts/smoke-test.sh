@@ -74,23 +74,31 @@ DIFF_BODY=$(printf '{"name":"Different Name","email":"%s","address":"1 Test Stre
 expect "same key with a different body is rejected" 422 "$(code -X POST "$BASE_URL/api/v1/patients" -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" -H "Idempotency-Key: $IDEM_KEY" -d "$DIFF_BODY")"
 expect "invalid Idempotency-Key is rejected" 400 "$(code -X POST "$BASE_URL/api/v1/patients" -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" -H 'Idempotency-Key: has space' -d "$IDEM_BODY")"
 
-echo "5. Downstream effects (read from container logs)"
+echo "5. Downstream effects"
 if command -v docker >/dev/null 2>&1 && docker compose ps >/dev/null 2>&1; then
-  analytics_ok=0
+  # Day 8: the patient and its event are saved together in the outbox table. Nothing publishes
+  # the event to Kafka until the relay exists (Day 9), so the analytics check is opt-in.
+  outbox_count=$(docker compose exec -T patient-db psql -U admin_user -d patient-service-db -tAc \
+    "select count(*) from outbox_event where aggregate_id = '$first_id' and event_type = 'PATIENT_CREATED'" 2>/dev/null | tr -d '[:space:]')
+  if [ "$outbox_count" = "1" ]; then pass "patient created together with exactly one PATIENT_CREATED outbox event"; else fail "expected 1 outbox event for patient $first_id, found '${outbox_count:-none}'"; fi
+
   billing_ok=0
+  analytics_ok=0
   for _ in $(seq 1 10); do
-    # Capture the logs first, then grep. Piping `docker compose logs` straight into `grep -q`
-    # breaks under `set -o pipefail`: grep exits at the first match, docker gets SIGPIPE, and the
-    # whole pipeline reports failure even though the text was found.
-    analytics_logs=$(docker compose logs --since 5m analytics-service 2>/dev/null || true)
+    # Capture the logs first, then grep (piping into `grep -q` breaks under pipefail).
     billing_logs=$(docker compose logs --since 5m billing-service 2>/dev/null || true)
-    if grep -q "$EMAIL" <<<"$analytics_logs"; then analytics_ok=1; fi
-    if grep -q "$EMAIL" <<<"$billing_logs"; then billing_ok=1; fi
-    if [ "$analytics_ok" = "1" ] && [ "$billing_ok" = "1" ]; then break; fi
+    analytics_logs=$(docker compose logs --since 5m analytics-service 2>/dev/null || true)
+    if grep -q "$IDEM_EMAIL" <<<"$billing_logs"; then billing_ok=1; fi
+    if grep -q "$IDEM_EMAIL" <<<"$analytics_logs"; then analytics_ok=1; fi
+    if [ "$billing_ok" = "1" ] && { [ "${EXPECT_RELAY:-0}" != "1" ] || [ "$analytics_ok" = "1" ]; }; then break; fi
     sleep 2
   done
-  if [ "$analytics_ok" = "1" ]; then pass "analytics-service consumed the Kafka event"; else fail "analytics-service did not log the event for $EMAIL"; fi
-  if [ "$billing_ok" = "1" ]; then pass "billing-service received the gRPC call for this patient"; else fail "billing-service did not log a gRPC request for $EMAIL"; fi
+  if [ "$billing_ok" = "1" ]; then pass "billing-service received the gRPC call for this patient"; else fail "billing-service did not log a gRPC request for $IDEM_EMAIL"; fi
+  if [ "${EXPECT_RELAY:-0}" = "1" ]; then
+    if [ "$analytics_ok" = "1" ]; then pass "analytics-service consumed the event via the relay"; else fail "analytics-service did not log the event for $IDEM_EMAIL"; fi
+  else
+    echo "  SKIP  analytics check (set EXPECT_RELAY=1 once the outbox relay exists, Day 9)"
+  fi
 else
   echo "  SKIP  docker compose not available here; check logs manually"
 fi

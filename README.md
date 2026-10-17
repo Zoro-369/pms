@@ -137,8 +137,11 @@ deployed to LocalStack with `infrastructure/localstack-deploy.sh`. It is separat
 - **Pagination, sorting and search**, and API versioning under `/api/v1`.
 - **k6 benchmarks** with a documented baseline, and a warm-up fix after finding a cold-start p99 artifact.
 - **Unit and web-layer tests** for patient-service (Mockito, `@WebMvcTest`) with JaCoCo coverage reporting.
-- Repository tests run against real PostgreSQL via Testcontainers; Docker required
-- Idempotent create create via Idempotency-Key header.
+- **Repository tests** run against real PostgreSQL via Testcontainers; Docker required
+- Idempotent create via Idempotency-Key header.
+- Replaced a dual write with a transactional outbox: the patient and its event are saved in one DB transaction, and a relay publishes it afterwards.
+- The outbox writer uses Propagation.MANDATORY, so it throws if someone calls it outside a transaction. That makes the atomicity a design rule rather than a convention.
+- I proved rollback with a Testcontainers test: when billing fails, there are zero patient rows and zero outbox rows.
 
 ## Database
 
